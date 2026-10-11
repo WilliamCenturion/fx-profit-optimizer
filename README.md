@@ -1,0 +1,1 @@
+# fx-profit-optimizer
