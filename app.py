@@ -1,5 +1,6 @@
 
 import streamlit as st
+import pandas as pd
 
 st.set_page_config(
     page_title="FX Profit Optimizer",
@@ -8,120 +9,111 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ---------- ESTILO ----------
 st.markdown("""
 <style>
-    .stApp {
-        background: #0b1120;
-        color: #e5edf7;
-    }
-    [data-testid="stHeader"] {
-        background: rgba(11,17,32,0.95);
-    }
-    .block-container {
-        max-width: 1100px;
-        padding-top: 2rem;
-        padding-bottom: 3rem;
-    }
-    h1, h2, h3, p, label {
-        color: #e5edf7;
-    }
-    .hero {
-        background: linear-gradient(135deg, #17243a, #102b32);
-        border: 1px solid #294650;
-        border-radius: 18px;
-        padding: 28px;
-        margin-bottom: 22px;
-    }
-    .hero p {
-        color: #a9bacd;
-    }
-    .eyebrow {
-        color: #65dec6;
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 2px;
-    }
-    .panel {
-        background: #131e30;
-        border: 1px solid #27364b;
-        border-radius: 15px;
-        padding: 20px;
-        margin-bottom: 16px;
-    }
-    .muted {
-        color: #9aacc2;
-        font-size: 13px;
-    }
-    .result {
-        background: #142f32;
-        border: 1px solid #28635c;
-        border-radius: 15px;
-        padding: 22px;
-        margin: 16px 0;
-    }
-    .result-label {
-        color: #75e2cb;
-        font-size: 13px;
-        font-weight: 700;
-    }
-    div.stButton > button[kind="primary"] {
-        background: #61d9bf;
-        color: #0b1720;
-        border: none;
-        border-radius: 10px;
-        font-weight: 700;
-        min-height: 48px;
-        width: 100%;
-    }
-    div.stButton > button[kind="primary"]:hover {
-        background: #8cebd7;
-        color: #0b1720;
-    }
-    [data-testid="stMetric"] {
-        background: #131e30;
-        border: 1px solid #27364b;
-        padding: 15px;
-        border-radius: 12px;
-    }
-    [data-testid="stMetricValue"] {
-        color: #75e2cb;
-    }
-    div[data-baseweb="select"] > div,
-    div[data-baseweb="input"] > div {
-        background: #172338;
-        border-color: #35445a;
-    }
-    hr {
-        border-color: #27364b;
-    }
+.stApp {
+    background: #0b1120;
+    color: #e5edf7;
+}
+.block-container {
+    max-width: 1120px;
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+}
+.hero {
+    background: linear-gradient(120deg, #17243a, #103331);
+    border: 1px solid #294650;
+    border-radius: 18px;
+    padding: 28px;
+    margin-bottom: 26px;
+}
+.eyebrow {
+    color: #70e0c7;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+}
+.panel {
+    background: #131e30;
+    border: 1px solid #293950;
+    border-radius: 15px;
+    padding: 22px;
+    margin-bottom: 18px;
+}
+.result-panel {
+    background: #12302f;
+    border: 1px solid #28635c;
+    border-radius: 15px;
+    padding: 22px;
+    margin: 12px 0 20px 0;
+}
+.small-muted {
+    color: #9aacc2;
+    font-size: 13px;
+}
+div.stButton > button[kind="primary"] {
+    background: #61d9bf;
+    color: #0b1720;
+    border: none;
+    border-radius: 10px;
+    font-weight: 700;
+    min-height: 46px;
+}
+div.stButton > button[kind="primary"]:hover {
+    background: #8cebd7;
+    color: #0b1720;
+}
+[data-testid="stMetric"] {
+    background: #131e30;
+    border: 1px solid #293950;
+    border-radius: 12px;
+    padding: 16px;
+}
+[data-testid="stMetricValue"] {
+    color: #70e0c7;
+}
+hr {
+    border-color: #293950;
+}
 </style>
 """, unsafe_allow_html=True)
 
-currencies = {
+CURRENCIES = {
     "BRL": "🇧🇷 Real brasileiro",
     "USD": "🇺🇸 Dólar americano",
     "EUR": "🇪🇺 Euro",
     "USDT": "₮ Tether",
 }
 
+PROVIDERS = [
+    "Wise",
+    "Nomad",
+    "Binance",
+    "Coinbase",
+    "Bitso",
+    "Outras plataformas",
+]
+
+# ---------- CABEÇALHO ----------
 st.markdown("""
 <div class="hero">
     <div class="eyebrow">SMART CURRENCY EXCHANGE</div>
-    <h1 style="font-size:36px; margin-bottom:4px;">
+    <h1 style="font-size:36px; margin:10px 0;">
         FX Profit Optimizer
     </h1>
-    <p style="font-size:16px;">
-        Compare moedas, plataformas e custos.
-        Descubra qual rota entrega mais dinheiro.
+    <p style="font-size:16px; margin-bottom:0;">
+        Compare cotações, taxas e rotas para descobrir
+        onde seu dinheiro rende mais na conversão.
     </p>
 </div>
 """, unsafe_allow_html=True)
 
-left, right = st.columns([1, 1], gap="large")
+# ---------- FORMULÁRIO ----------
+left, right = st.columns(2, gap="large")
 
 with left:
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.subheader("💰 Sua conversão")
+    st.markdown("### 💰 Sua conversão")
 
     amount = st.number_input(
         "Quanto você possui?",
@@ -133,138 +125,159 @@ with left:
 
     source = st.selectbox(
         "Moeda de origem",
-        list(currencies.keys()),
-        format_func=lambda x: f"{x} — {currencies[x]}",
+        list(CURRENCIES.keys()),
+        format_func=lambda c: f"{c} — {CURRENCIES[c]}",
         index=0,
     )
 
-    target_options = [
-        c for c in currencies.keys() if c != source
+    destinations = [
+        c for c in CURRENCIES if c != source
     ]
 
     target = st.selectbox(
         "Quero receber",
-        target_options,
-        format_func=lambda x: f"{x} — {currencies[x]}",
-        index=0,
+        destinations,
+        format_func=lambda c: f"{c} — {CURRENCIES[c]}",
     )
 
-    st.markdown("**Como pretende movimentar o dinheiro?**")
+    st.markdown("**Meio de movimentação**")
 
-    payment_options = {
-        "PIX": "BRL",
-        "Transferência bancária": "BRL",
-        "Saldo em plataforma": "QUALQUER",
-        "Criptomoeda": "CRYPTO",
-    }
+    if source == "BRL":
+        payment_options = [
+            "PIX",
+            "Transferência bancária",
+            "Saldo em plataforma",
+        ]
+    elif source == "USDT":
+        payment_options = [
+            "Saldo em exchange",
+            "Rede de criptomoedas",
+        ]
+    else:
+        payment_options = [
+            "Saldo em plataforma",
+            "Transferência bancária",
+        ]
 
     payment = st.selectbox(
-        "Método de entrada ou origem",
-        list(payment_options.keys()),
-        index=0 if source == "BRL" else 2,
+        "Como pretende movimentar o dinheiro?",
+        payment_options,
     )
 
-    st.markdown(
-        '<p class="muted">O método selecionado é uma '
-        'preferência para a comparação, não uma confirmação '
-        'de disponibilidade.</p>',
-        unsafe_allow_html=True,
+    st.caption(
+        "O método selecionado é uma preferência. "
+        "A disponibilidade será verificada por provedor."
     )
-    st.markdown("</div>", unsafe_allow_html=True)
 
 with right:
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.subheader("🌐 Onde comparar")
+    st.markdown("### 🌐 Plataformas para comparar")
 
     providers = st.multiselect(
-        "Plataformas de interesse",
-        [
-            "Wise",
-            "Nomad",
-            "Binance",
-            "Coinbase",
-            "Bitso",
-            "Outras plataformas",
-        ],
+        "Selecione as plataformas de interesse",
+        PROVIDERS,
         default=["Wise", "Nomad", "Binance", "Bitso"],
     )
 
-    st.markdown("**O que importa para você?**")
-
     priority = st.radio(
-        "Critério de recomendação",
+        "Qual é sua prioridade?",
         [
             "Maior valor líquido recebido",
             "Menores custos totais",
         ],
-        index=0,
     )
 
-    st.markdown(
-        '<p class="muted">A comparação futura incluirá '
-        'cotação, spread, taxas e custos de transferência. '
-        'Somente rotas compatíveis serão classificadas.</p>',
-        unsafe_allow_html=True,
+    st.markdown("**O que será considerado**")
+
+    st.markdown("""
+    - Cotação efetiva oferecida.
+    - Tarifas e spread cambial.
+    - Custos de entrada, saída e transferência.
+    - Compatibilidade da rota com a moeda escolhida.
+    """)
+
+    st.caption(
+        "Só serão classificadas rotas com dados suficientes."
     )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-st.markdown("### 📊 Resultado da comparação")
-
-st.markdown("""
-<div class="result">
-    <div class="result-label">MOTOR DE RECOMENDAÇÃO</div>
-    <h3 style="margin-bottom:6px;">Encontre a melhor rota</h3>
-    <p style="color:#b6c9d5; margin-bottom:0;">
-        Informe os dados da conversão e compare as alternativas
-        quando as cotações e tarifas estiverem disponíveis.
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
-if st.button("🔎 Comparar conversões", type="primary"):
-    if source == target:
-        st.warning("Escolha moedas diferentes.")
-    elif not providers:
-        st.warning("Selecione ao menos uma plataforma.")
-    else:
-        st.info(
-            "A interface está pronta para receber o motor "
-            "de comparação. Ainda não existem cotações reais "
-            "nem tarifas integradas."
-        )
-
-        st.markdown("#### Resumo da sua consulta")
-
-        c1, c2, c3 = st.columns(3)
-
-        c1.metric(
-            "Capital informado",
-            f"{amount:,.2f} {source}",
-        )
-
-        c2.metric("Destino", target)
-
-        c3.metric(
-            "Plataformas selecionadas",
-            str(len(providers)),
-        )
-
-        st.caption(
-            f"Método escolhido: {payment} · "
-            f"Critério: {priority}"
-        )
 
 st.divider()
 
+# ---------- RESULTADO ----------
+st.markdown("### 📊 Comparação de conversões")
+
 st.markdown("""
-<div style="text-align:center; padding:12px;">
-    <p style="color:#9aacc2; font-size:13px;">
-        FX Profit Optimizer · Compare antes de converter.
-    </p>
-    <p style="color:#74869e; font-size:11px;">
-        Protótipo demonstrativo. Não executa transações
-        financeiras. Cotações reais serão integradas
-        em uma próxima etapa.
+<div class="result-panel">
+    <div class="eyebrow">MOTOR DE RECOMENDAÇÃO</div>
+    <h3 style="margin:10px 0;">
+        Compare antes de converter
+    </h3>
+    <p style="margin-bottom:0;">
+        O objetivo é encontrar o maior saldo líquido
+        na moeda de destino, considerando todos os custos.
     </p>
 </div>
 """, unsafe_allow_html=True)
+
+compare = st.button(
+    "🔎 Preparar comparação",
+    type="primary",
+    use_container_width=True,
+)
+
+if compare:
+    if not providers:
+        st.warning("Selecione pelo menos uma plataforma.")
+    else:
+        st.info(
+            "A interface está preparada. As integrações de "
+            "cotações e tarifas reais ainda não foram conectadas."
+        )
+
+        rows = []
+
+        for provider in providers:
+            rows.append({
+                "Plataforma": provider,
+                "Rota": f"{source} → {target}",
+                "Cotação": "Pendente",
+                "Custos": "Pendente",
+                "Valor líquido": "Indisponível",
+                "Situação": "Aguardando dados reais",
+            })
+
+        st.dataframe(
+            pd.DataFrame(rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.caption(
+            f"Valor informado: {amount:.2f} {source} · "
+            f"Método: {payment} · Prioridade: {priority}"
+        )
+
+        st.warning(
+            "Ainda não há uma recomendação vencedora. "
+            "Não seria confiável escolher uma plataforma "
+            "sem consultar suas cotações, tarifas e condições."
+        )
+else:
+    st.markdown("""
+    <div class="panel">
+        <p style="margin-bottom:5px;">
+            <strong>O que você verá aqui</strong>
+        </p>
+        <p class="small-muted" style="margin-bottom:0;">
+            Ranking de provedores, cotação, custo total,
+            valor líquido e indicação da melhor rota elegível.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ---------- RODAPÉ ----------
+st.divider()
+
+st.caption(
+    "FX Profit Optimizer · Protótipo em desenvolvimento. "
+    "Não executa transações financeiras. "
+    "As cotações reais serão integradas posteriormente."
+)
