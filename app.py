@@ -1,134 +1,289 @@
 import streamlit as st
 import pandas as pd
+import requests
 from datetime import datetime, timezone
 
-st.set_page_config(page_title="FX Profit Optimizer", page_icon="💱", layout="wide")
+# ---------------------------------------------------------
+# FX Profit Optimizer — interface v2
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="FX Profit Optimizer",
+    page_icon="💱",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+ASSETS = {
+    "USDC": {"kind": "Cripto / stablecoin", "coingecko": "usd-coin"},
+    "USDT": {"kind": "Cripto / stablecoin", "coingecko": "tether"},
+    "BTC": {"kind": "Criptomoeda", "coingecko": "bitcoin"},
+    "ETH": {"kind": "Criptomoeda", "coingecko": "ethereum"},
+    "USD": {"kind": "Fiduciária", "coingecko": None},
+    "BRL": {"kind": "Fiduciária", "coingecko": None},
+    "EUR": {"kind": "Fiduciária", "coingecko": None},
+    "GBP": {"kind": "Fiduciária", "coingecko": None},
+}
+
+DEFAULT_COSTS = pd.DataFrame([
+    {"Destino": asset, "Taxa plataforma (%)": 0.0, "Spread (%)": 0.0, "Tarifa fixa (USD)": 0.0}
+    for asset in ASSETS
+])
+
+# Visual identity: black + yellow
 st.markdown("""
 <style>
-.stApp { background: #0b1120; color: #e5edf7; }
-[data-testid="stSidebar"] { background: #111a2b; }
-.block-container { max-width: 1240px; padding-top: 1.6rem; }
+:root { --fx-yellow: #f5c400; --fx-black: #080a0f; }
+.stApp { background: #080a0f; color: #f4f4f5; }
+[data-testid="stHeader"] { background: rgba(8,10,15,.96); }
+.block-container { max-width: 1120px; padding-top: 2.2rem; padding-bottom: 4rem; }
+[data-testid="stSidebar"] { background: #10131b; }
+h1, h2, h3 { color: #f7f7f7 !important; }
+.fx-kicker { color: #f5c400; letter-spacing: .18em; font-size: .76rem; font-weight: 800; }
+.fx-subtitle { color: #a1a1aa; font-size: 1rem; }
+.fx-panel { background: linear-gradient(145deg,#171a22,#101219); border: 1px solid #292d37;
+            border-radius: 20px; padding: 1.4rem; }
+.fx-yellow { color: #f5c400; }
+div.stButton > button[kind="primary"], div.stFormSubmitButton > button {
+    background: #f5c400; color: #080a0f; border: 0; border-radius: 12px;
+    min-height: 3.1rem; font-weight: 800; width: 100%;
+}
+div.stButton > button[kind="primary"]:hover, div.stFormSubmitButton > button:hover {
+    background: #ffda36; color: #080a0f; border: 0;
+}
+[data-testid="stNumberInput"] input, [data-testid="stSelectbox"] div[data-baseweb="select"] {
+    background: #20232c; color: #fff; border-radius: 10px;
+}
+[data-testid="stMetric"] { background: #151821; border: 1px solid #2a2e38;
+                           border-radius: 14px; padding: 14px; }
+[data-testid="stMetricLabel"] { color: #a1a1aa; }
+[data-testid="stMetricValue"] { color: #f5c400; }
+[data-testid="stDataFrame"] { border: 1px solid #292d37; border-radius: 12px; }
+hr { border-color: #292d37; }
+small, .stCaption { color: #a1a1aa !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💱 FX Profit Optimizer")
-st.caption("Compare o valor líquido estimado do excedente de trading. O app não executa transações.")
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_market_prices():
+    """Return USD value for each asset, plus source/date metadata."""
+    prices = {"USD": 1.0}
+    sources = []
+    errors = []
 
-with st.sidebar:
-    st.header("Capital de origem")
-    amount = st.number_input("Saldo disponível (USDC)", min_value=0.0, value=200.0, step=10.0, format="%.4f")
-    withdrawal_fee = st.number_input("Taxa de retirada (USDC)", min_value=0.0, value=0.20, step=0.05, format="%.4f")
-    network_fee_usd = st.number_input("Custo adicional de rede (USD)", min_value=0.0, value=0.05, step=0.01, format="%.4f")
-    st.divider()
-    st.header("Cotações de referência")
-    mode = st.radio("Fonte de câmbio", ["Demonstração/editável", "Buscar câmbio fiduciário indicativo"])
-    usd_brl_default, eur_usd_default = 5.50, 1.08
-    quote_source = "SIMULADO — substitua pelos valores atuais"
-    if mode == "Buscar câmbio fiduciário indicativo":
-        try:
-            import requests
-            response = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL,EUR", timeout=5)
-            response.raise_for_status()
-            quote = response.json()
-            usd_brl_default = float(quote["rates"]["BRL"])
-            eur_usd_default = 1.0 / float(quote["rates"]["EUR"])
-            quote_source = f"Frankfurter API — taxa indicativa com data {quote.get('date', 'não informada')}"
-        except Exception:
-            st.warning("Não foi possível consultar a API; confira e preencha as taxas manualmente.")
-            quote_source = "Consulta indisponível — valores editáveis abaixo"
-    usd_brl = st.number_input("1 USD = BRL", min_value=0.0001, value=float(usd_brl_default), step=0.01, format="%.5f")
-    eur_usd = st.number_input("1 EUR = USD", min_value=0.0001, value=float(eur_usd_default), step=0.01, format="%.5f")
-    usdc_usd = st.number_input("Preço de 1 USDC em USD", min_value=0.0001, value=1.0, step=0.001, format="%.5f")
-    euri_eur = st.number_input("Preço de 1 EURI em EUR", min_value=0.0001, value=1.0, step=0.001, format="%.5f")
-    st.caption(quote_source)
+    # Crypto assets: public CoinGecko simple-price endpoint.
+    crypto_ids = ",".join(["usd-coin", "tether", "bitcoin", "ethereum"])
+    try:
+        response = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": crypto_ids, "vs_currencies": "usd"},
+            timeout=8,
+            headers={"accept": "application/json"},
+        )
+        response.raise_for_status()
+        data = response.json()
+        for symbol, coin_id in {
+            "USDC": "usd-coin", "USDT": "tether", "BTC": "bitcoin", "ETH": "ethereum"
+        }.items():
+            value = data.get(coin_id, {}).get("usd")
+            if value is not None and float(value) > 0:
+                prices[symbol] = float(value)
+        sources.append("CoinGecko (criptoativos)")
+    except Exception as exc:
+        errors.append(f"Criptoativos: {exc}")
 
-st.subheader("Custos por rota")
-st.write("Edite as tarifas da plataforma, o spread e a tarifa fixa de cada destino. Percentuais são aplicados ao valor convertido.")
-fee_defaults = pd.DataFrame([
-    {"Destino": "USDC", "Taxa plataforma (%)": 0.10, "Spread (%)": 0.05, "Tarifa fixa (USD)": 0.00},
-    {"Destino": "BRL", "Taxa plataforma (%)": 0.50, "Spread (%)": 0.40, "Tarifa fixa (USD)": 0.00},
-    {"Destino": "EUR", "Taxa plataforma (%)": 0.30, "Spread (%)": 0.20, "Tarifa fixa (USD)": 0.00},
-    {"Destino": "EURI", "Taxa plataforma (%)": 0.20, "Spread (%)": 0.20, "Tarifa fixa (USD)": 0.00},
-])
-fees = st.data_editor(
-    fee_defaults, hide_index=True, use_container_width=True, disabled=["Destino"], key="route_costs",
-    column_config={
-        "Taxa plataforma (%)": st.column_config.NumberColumn(min_value=0.0, max_value=99.0, step=0.05, format="%.3f"),
-        "Spread (%)": st.column_config.NumberColumn(min_value=0.0, max_value=99.0, step=0.05, format="%.3f"),
-        "Tarifa fixa (USD)": st.column_config.NumberColumn(min_value=0.0, max_value=10000.0, step=0.01, format="%.4f"),
-    },
-)
+    # Fiat currencies: Frankfurter publishes reference FX rates against USD.
+    try:
+        response = requests.get(
+            "https://api.frankfurter.app/latest",
+            params={"from": "USD", "to": "BRL,EUR,GBP"},
+            timeout=8,
+        )
+        response.raise_for_status()
+        data = response.json()
+        rates = data.get("rates", {})
+        if rates.get("BRL"):
+            prices["BRL"] = 1.0 / float(rates["BRL"])
+        if rates.get("EUR"):
+            prices["EUR"] = 1.0 / float(rates["EUR"])
+        if rates.get("GBP"):
+            prices["GBP"] = 1.0 / float(rates["GBP"])
+        sources.append(f"Frankfurter (câmbio fiduciário; data {data.get('date', 'não informada')})")
+    except Exception as exc:
+        errors.append(f"Moedas fiduciárias: {exc}")
 
-st.subheader("Ranking por valor líquido")
-if amount <= 0:
-    st.info("Informe um saldo maior que zero.")
-elif withdrawal_fee >= amount:
-    st.error("A taxa de retirada precisa ser menor que o saldo disponível.")
-else:
-    usdc_remaining = amount - withdrawal_fee - network_fee_usd / usdc_usd
-    if usdc_remaining <= 0:
-        st.error("Os custos de origem consomem todo o saldo. Ajuste as taxas.")
-    else:
-        usd_remaining = usdc_remaining * usdc_usd
-        gross_units = {
-            "USDC": usd_remaining / usdc_usd,
-            "BRL": usd_remaining * usd_brl,
-            "EUR": usd_remaining / eur_usd,
-            "EURI": usd_remaining / (eur_usd * euri_eur),
-        }
-        usd_per_unit = {
-            "USDC": usdc_usd,
-            "BRL": 1.0 / usd_brl,
-            "EUR": eur_usd,
-            "EURI": eur_usd * euri_eur,
-        }
-        results = []
-        for _, row in fees.iterrows():
-            asset = row["Destino"]
-            platform_rate = float(row["Taxa plataforma (%)"]) / 100.0
-            spread_rate = float(row["Spread (%)"]) / 100.0
-            fixed_usd = float(row["Tarifa fixa (USD)"])
-            if platform_rate < 0 or spread_rate < 0 or platform_rate + spread_rate >= 1 or fixed_usd < 0:
-                continue
-            net_usd = max(0.0, usd_remaining * (1.0 - platform_rate - spread_rate) - fixed_usd)
-            results.append({
-                "Destino": asset,
-                "Valor líquido recebido": net_usd / usd_per_unit[asset],
-                "Equivalente líquido (USD)": net_usd,
-                "Taxas + spread (%)": (platform_rate + spread_rate) * 100,
-                "Tarifa fixa (USD)": fixed_usd,
-                "Valor bruto estimado": gross_units[asset],
-            })
-        if not results:
-            st.error("Revise as tarifas: taxa da plataforma + spread precisam somar menos de 100%.")
+    return prices, sources, errors
+
+def money(value, symbol):
+    if symbol in ("BTC", "ETH"):
+        return f"{value:,.8f} {symbol}"
+    return f"{value:,.4f} {symbol}"
+
+def build_ranking(amount, origin, prices, costs):
+    origin_price = prices[origin]
+    gross_usd = amount * origin_price
+    results = []
+
+    for destination in ASSETS:
+        if destination not in prices:
+            continue
+
+        row = costs.loc[costs["Destino"] == destination]
+        if row.empty:
+            platform_pct, spread_pct, fixed_usd = 0.0, 0.0, 0.0
         else:
-            ranking = pd.DataFrame(results).sort_values("Equivalente líquido (USD)", ascending=False).reset_index(drop=True)
-            ranking.insert(0, "Ranking", range(1, len(ranking) + 1))
-            best = ranking.iloc[0]
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Melhor resultado pelos custos informados", best["Destino"])
-            c2.metric("Valor líquido", f'{best["Valor líquido recebido"]:,.4f} {best["Destino"]}')
-            c3.metric("Equivalente líquido", f'US$ {best["Equivalente líquido (USD)"]:,.4f}')
-            st.dataframe(ranking.style.format({
-                "Valor líquido recebido": "{:,.4f}",
-                "Equivalente líquido (USD)": "US$ {:,.4f}",
-                "Taxas + spread (%)": "{:.3f}%",
-                "Tarifa fixa (USD)": "US$ {:.4f}",
-                "Valor bruto estimado": "{:,.4f}",
-            }), use_container_width=True, hide_index=True)
-            st.caption(f"Saldo inicial: {amount:.4f} USDC · após custos de origem: {usdc_remaining:.4f} USDC equivalentes · antes dos custos do destino: US$ {usd_remaining:.4f}")
+            platform_pct = float(row.iloc[0]["Taxa plataforma (%)"])
+            spread_pct = float(row.iloc[0]["Spread (%)"])
+            fixed_usd = float(row.iloc[0]["Tarifa fixa (USD)"])
 
-st.warning("Valores de demonstração por padrão. Câmbio fiduciário indicativo não é preço executável de corretora; USDC/EURI e as taxas devem ser conferidos no destino. O ranking compara o valor líquido estimado em USD e não prevê valorização futura.")
-with st.expander("Metodologia e limitações"):
+        total_pct = (platform_pct + spread_pct) / 100.0
+        if total_pct < 0 or total_pct >= 1 or fixed_usd < 0:
+            continue
+
+        net_usd = max(0.0, gross_usd * (1.0 - total_pct) - fixed_usd)
+        received = net_usd / prices[destination]
+        results.append({
+            "Destino": destination,
+            "Valor líquido recebido": received,
+            "Equivalente líquido (USD)": net_usd,
+            "Taxas + spread (%)": platform_pct + spread_pct,
+            "Tarifa fixa (USD)": fixed_usd,
+            "Variação vs. origem (USD)": net_usd - gross_usd,
+        })
+
+    results.sort(key=lambda item: item["Equivalente líquido (USD)"], reverse=True)
+    return results, gross_usd
+
+# Header
+left, right = st.columns([5, 1])
+with left:
+    st.markdown('<div class="fx-kicker">CÂMBIO INTELIGENTE · COMPARADOR DE ROTAS</div>', unsafe_allow_html=True)
+    st.title("FX Profit Optimizer")
+    st.markdown('<div class="fx-subtitle">Descubra onde seu dinheiro entrega o melhor valor líquido.</div>', unsafe_allow_html=True)
+with right:
+    st.markdown("<div style='text-align:right;font-size:2.3rem;padding-top:.6rem'>💱</div>", unsafe_allow_html=True)
+
+st.write("")
+st.markdown('<div class="fx-panel">', unsafe_allow_html=True)
+st.markdown("### Qual moeda você tem?")
+st.caption("Informe o saldo disponível e selecione o ativo de origem.")
+with st.form("conversion_form"):
+    amount_col, asset_col = st.columns([4, 1.25], vertical_alignment="bottom")
+    with amount_col:
+        amount = st.number_input(
+            "Valor disponível",
+            min_value=0.0,
+            value=10.0,
+            step=1.0,
+            format="%.8f",
+        )
+    with asset_col:
+        origin = st.selectbox("Moeda de origem", list(ASSETS.keys()), index=0)
+    submitted = st.form_submit_button("Encontrar melhor conversão  →", type="primary", use_container_width=True)
+st.markdown("</div>", unsafe_allow_html=True)
+
+st.write("")
+with st.expander("⚙️ Configurações avançadas — custos e taxas", expanded=False):
+    st.caption("Preencha os custos reais cobrados pela plataforma ou rota que você pretende utilizar. Zero significa que nenhum custo foi informado.")
+    costs = st.data_editor(
+        DEFAULT_COSTS,
+        hide_index=True,
+        use_container_width=True,
+        key="route_costs_v2",
+        column_config={
+            "Destino": st.column_config.TextColumn("Destino", disabled=True),
+            "Taxa plataforma (%)": st.column_config.NumberColumn("Taxa plataforma (%)", min_value=0.0, max_value=99.0, step=0.05, format="%.3f"),
+            "Spread (%)": st.column_config.NumberColumn("Spread (%)", min_value=0.0, max_value=99.0, step=0.05, format="%.3f"),
+            "Tarifa fixa (USD)": st.column_config.NumberColumn("Tarifa fixa (USD)", min_value=0.0, step=0.01, format="%.4f"),
+        },
+    )
+    network_fee = st.number_input(
+        "Custo de rede/saque adicional (USD)",
+        min_value=0.0,
+        value=0.0,
+        step=0.01,
+        format="%.4f",
+        help="Custo fixo cobrado na origem. Informe em USD equivalente; não inclua aqui uma taxa já cadastrada na tabela.",
+    )
+
+st.write("")
+st.markdown("### Melhor resultado")
+if submitted:
+    if amount <= 0:
+        st.error("Informe um valor maior que zero.")
+    else:
+        with st.spinner("Consultando cotações públicas e calculando as rotas..."):
+            prices, sources, errors = fetch_market_prices()
+
+        missing = [asset for asset in ASSETS if asset not in prices]
+        if origin not in prices:
+            st.error(f"Não foi possível obter a cotação de {origin}. Tente novamente mais tarde.")
+        else:
+            effective_usd = amount * prices[origin] - network_fee
+            if effective_usd <= 0:
+                st.error("Os custos informados consomem todo o valor de origem.")
+            else:
+                adjusted_amount = effective_usd / prices[origin]
+                ranking, gross_usd = build_ranking(adjusted_amount, origin, prices, costs)
+                if not ranking:
+                    st.error("Não foi possível calcular rotas com as cotações disponíveis.")
+                else:
+                    best = ranking[0]
+                    st.markdown('<div class="fx-panel">', unsafe_allow_html=True)
+                    st.markdown(f'<div class="fx-kicker">MELHOR RESULTADO ESTIMADO</div>', unsafe_allow_html=True)
+                    best_col, amount_col2, usd_col = st.columns([1, 2, 1.5])
+                    best_col.metric("Destino recomendado", best["Destino"])
+                    amount_col2.metric("Valor líquido estimado", money(best["Valor líquido recebido"], best["Destino"]))
+                    usd_col.metric("Equivalente líquido", f'US$ {best["Equivalente líquido (USD)"]:,.4f}')
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                    st.write("")
+                    st.markdown("#### Ranking de conversões")
+                    display_rows = []
+                    for index, item in enumerate(ranking, start=1):
+                        display_rows.append({
+                            "Posição": index,
+                            "Destino": item["Destino"],
+                            "Valor líquido recebido": money(item["Valor líquido recebido"], item["Destino"]),
+                            "Equivalente líquido (USD)": f'US$ {item["Equivalente líquido (USD)"]:,.4f}',
+                            "Taxas + spread": f'{item["Taxas + spread (%)"]:.3f}%',
+                            "Tarifa fixa": f'US$ {item["Tarifa fixa (USD)"]:,.4f}',
+                        })
+                    st.dataframe(pd.DataFrame(display_rows), hide_index=True, use_container_width=True)
+
+                    st.caption(
+                        f"Origem: {money(amount, origin)} · valor bruto de referência: US$ {gross_usd:,.4f} · "
+                        f"custo de rede informado: US$ {network_fee:,.4f}"
+                    )
+                    st.markdown("#### Cotação e transparência")
+                    st.caption(" | ".join(sources) if sources else "Nenhuma fonte de cotação respondeu.")
+                    if missing:
+                        st.warning("Sem cotação nesta consulta para: " + ", ".join(missing) + ". Essas moedas foram omitidas do ranking.")
+                    if errors:
+                        with st.expander("Detalhes das fontes indisponíveis"):
+                            for error in errors:
+                                st.write("• " + error)
+                    st.info("O ranking compara o equivalente líquido em USD. Cotações públicas são indicativas e podem diferir do preço executável, da liquidez e das taxas da sua corretora.")
+else:
+    st.markdown(
+        '<div class="fx-panel"><div style="font-size:1.05rem;font-weight:650">Sua próxima conversão começa aqui.</div>'
+        '<div style="color:#a1a1aa;margin-top:.4rem">Informe o valor, escolha a moeda e clique em “Encontrar melhor conversão”. '
+        'O ranking mostrará quanto você receberia em cada ativo disponível.</div></div>',
+        unsafe_allow_html=True,
+    )
+
+st.write("")
+with st.expander("Como o cálculo funciona"):
     st.markdown("""
-    1. Deduz a taxa de retirada em USDC e custos de rede expressos em USD equivalente.
-    2. Converte o saldo restante para o ativo de destino usando as cotações configuradas.
-    3. Deduz taxa percentual da plataforma, spread e tarifa fixa.
-    4. Ordena pelo equivalente líquido em USD para comparar unidades diferentes.
+    1. O aplicativo consulta preços públicos de criptoativos e taxas de câmbio fiduciárias.
+    2. Converte o valor de origem para um equivalente de referência em USD.
+    3. Deduz o custo de rede informado e os custos percentuais/fixos cadastrados para cada destino.
+    4. Converte o valor líquido para cada ativo e ordena pelo equivalente líquido em USD.
 
-    As tarifas são editáveis e não são obtidas automaticamente. A API opcional fornece câmbio fiduciário indicativo, não cotação executável.
-    Confirme o ticker exato (EURI e EURC são tokens diferentes), par, liquidez, rede e tarifas na corretora.
-    Stablecoins têm riscos de emissor, liquidez, perda de paridade, contrato inteligente e rede. O app não acessa contas nem movimenta fundos.
+    **Limitações:** CoinGecko e Frankfurter são fontes de referência, não cotações executáveis de corretoras. As taxas da tabela começam em zero e precisam ser preenchidas com os custos reais da rota. O aplicativo não acessa contas, não executa ordens e não movimenta fundos.
     """)
+
 st.divider()
-st.caption(f"FX Profit Optimizer · MVP · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · Não executa transações.")
+st.caption(
+    f"FX Profit Optimizer · Interface v2 · Cotações em cache por 60 segundos · "
+    f"Atualizado em {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+)
