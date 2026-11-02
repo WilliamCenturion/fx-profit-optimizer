@@ -59,44 +59,39 @@ def fetch_historical_prices(days: int = 120) -> Tuple[pd.DataFrame, list, list]:
     except Exception as exc:
         errors.append(f"Moedas fiduciárias (Frankfurter): {exc}")
 
-    # Crypto reference prices: Binance public daily klines (no API key).
-    # BTC/ETH are quoted in USDT; USDT is treated as a USD reference proxy.
-    # USDCUSDT captures a market-based USDC/USDT deviation when available.
-    binance_symbols = {
-        "BTC": "BTCUSDT",
-        "ETH": "ETHUSDT",
-        "USDC": "USDCUSDT",
+    # Crypto reference prices: Coinbase Exchange public daily candles (no API key).
+    # Endpoint returns [time, low, high, open, close, volume], newest first.
+    # One 120-day daily request is below Coinbase's 300-candle per-request cap.
+    coinbase_products = {
+        "BTC": "BTC-USD",
+        "ETH": "ETH-USD",
+        "USDC": "USDC-USD",
     }
-    for symbol, market in binance_symbols.items():
+    start_iso = pd.Timestamp(start, tz="UTC").isoformat().replace("+00:00", "Z")
+    end_iso = pd.Timestamp(end + timedelta(days=1), tz="UTC").isoformat().replace("+00:00", "Z")
+    for symbol, product in coinbase_products.items():
         try:
             payload = _request_json(
-                "https://api.binance.com/api/v3/klines",
-                {"symbol": market, "interval": "1d", "limit": str(min(days + 5, 1000))},
+                f"https://api.exchange.coinbase.com/products/{product}/candles",
+                {
+                    "granularity": "86400",
+                    "start": start_iso,
+                    "end": end_iso,
+                },
             )
             if payload:
                 frame = pd.DataFrame(
                     payload,
-                    columns=[
-                        "open_time", "open", "high", "low", "close", "volume",
-                        "close_time", "quote_volume", "trades", "taker_buy_base",
-                        "taker_buy_quote", "ignore",
-                    ],
+                    columns=["timestamp", "low", "high", "open", "close", "volume"],
                 )
-                frame["date"] = pd.to_datetime(frame["open_time"], unit="ms").dt.normalize()
-                values = frame.set_index("date")["close"].astype(float)
+                frame["date"] = pd.to_datetime(frame["timestamp"], unit="s").dt.normalize()
+                values = frame.groupby("date")["close"].last().astype(float).sort_index()
                 values = values[values > 0]
                 if not values.empty:
                     series[symbol] = values
-                    sources.append(f"{symbol} — Binance Market Data ({market})")
+                    sources.append(f"{symbol} — Coinbase Exchange ({product})")
         except Exception as exc:
-            errors.append(f"{symbol} (Binance): {exc}")
-
-    # USDT is a USD peg proxy, explicitly disclosed as an assumption.
-    series["USDT"] = pd.Series(
-        1.0,
-        index=pd.date_range(start=pd.Timestamp(start), end=pd.Timestamp(end), freq="D"),
-    )
-    sources.append("USDT — proxy de paridade USD; risco de depeg não mensurado")
+            errors.append(f"{symbol} (Coinbase): {exc}")
 
     # USD is the numeraire. Forward-fill fiat weekends and align all series.
     # USD is the numeraire. It also provides a transparent peg proxy for
