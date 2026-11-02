@@ -59,21 +59,44 @@ def fetch_historical_prices(days: int = 120) -> Tuple[pd.DataFrame, list, list]:
     except Exception as exc:
         errors.append(f"Moedas fiduciárias (Frankfurter): {exc}")
 
-    # Crypto reference prices: CoinGecko public market chart endpoint.
-    for symbol, coin_id in ASSET_IDS.items():
+    # Crypto reference prices: Binance public daily klines (no API key).
+    # BTC/ETH are quoted in USDT; USDT is treated as a USD reference proxy.
+    # USDCUSDT captures a market-based USDC/USDT deviation when available.
+    binance_symbols = {
+        "BTC": "BTCUSDT",
+        "ETH": "ETHUSDT",
+        "USDC": "USDCUSDT",
+    }
+    for symbol, market in binance_symbols.items():
         try:
             payload = _request_json(
-                f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart",
-                {"vs_currency": "usd", "days": str(days), "interval": "daily"},
+                "https://api.binance.com/api/v3/klines",
+                {"symbol": market, "interval": "1d", "limit": str(min(days + 5, 1000))},
             )
-            points = payload.get("prices", [])
-            if points:
-                frame = pd.DataFrame(points, columns=["timestamp", "price"])
-                frame["date"] = pd.to_datetime(frame["timestamp"], unit="ms").dt.normalize()
-                values = frame.groupby("date")["price"].last().astype(float)
-                series[symbol] = values[values > 0]
+            if payload:
+                frame = pd.DataFrame(
+                    payload,
+                    columns=[
+                        "open_time", "open", "high", "low", "close", "volume",
+                        "close_time", "quote_volume", "trades", "taker_buy_base",
+                        "taker_buy_quote", "ignore",
+                    ],
+                )
+                frame["date"] = pd.to_datetime(frame["open_time"], unit="ms").dt.normalize()
+                values = frame.set_index("date")["close"].astype(float)
+                values = values[values > 0]
+                if not values.empty:
+                    series[symbol] = values
+                    sources.append(f"{symbol} — Binance Market Data ({market})")
         except Exception as exc:
-            errors.append(f"{symbol} (CoinGecko): {exc}")
+            errors.append(f"{symbol} (Binance): {exc}")
+
+    # USDT is a USD peg proxy, explicitly disclosed as an assumption.
+    series["USDT"] = pd.Series(
+        1.0,
+        index=pd.date_range(start=pd.Timestamp(start), end=pd.Timestamp(end), freq="D"),
+    )
+    sources.append("USDT — proxy de paridade USD; risco de depeg não mensurado")
 
     # USD is the numeraire. Forward-fill fiat weekends and align all series.
     # USD is the numeraire. It also provides a transparent peg proxy for
@@ -83,15 +106,10 @@ def fetch_historical_prices(days: int = 120) -> Tuple[pd.DataFrame, list, list]:
     )
     series["USD"] = pd.Series(1.0, index=daily_index)
 
-    # Stablecoins target USD. When CoinGecko history is missing/rate-limited,
-    # use USD as an explicit peg proxy rather than failing the whole analysis.
-    # The UI/source note makes this assumption visible to the user.
-    for stablecoin in ("USDC", "USDT"):
-        if stablecoin not in series or series[stablecoin].dropna().shape[0] < 60:
-            series[stablecoin] = pd.Series(1.0, index=daily_index)
-            sources.append(
-                f"{stablecoin} — proxy de paridade USD (histórico próprio indisponível)"
-            )
+    # USDC falls back to a USD peg proxy only if Binance has no usable market history.
+    if "USDC" not in series or series["USDC"].dropna().shape[0] < 60:
+        series["USDC"] = pd.Series(1.0, index=daily_index)
+        sources.append("USDC — proxy de paridade USD; risco de depeg não mensurado")
 
     if not series:
         return pd.DataFrame(), sources, errors
