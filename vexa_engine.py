@@ -59,39 +59,42 @@ def fetch_historical_prices(days: int = 120) -> Tuple[pd.DataFrame, list, list]:
     except Exception as exc:
         errors.append(f"Moedas fiduciárias (Frankfurter): {exc}")
 
-    # Crypto reference prices: Coinbase Exchange public daily candles (no API key).
-    # Endpoint returns [time, low, high, open, close, volume], newest first.
-    # One 120-day daily request is below Coinbase's 300-candle per-request cap.
-    coinbase_products = {
-        "BTC": "BTC-USD",
-        "ETH": "ETH-USD",
-        "USDC": "USDC-USD",
+    # Crypto reference prices: DeFiLlama Coins API, batched daily chart.
+    # This avoids direct exchange endpoints and reduces the number of requests.
+    llama_ids = {
+        "BTC": "coingecko:bitcoin",
+        "ETH": "coingecko:ethereum",
+        "USDC": "coingecko:usd-coin",
+        "USDT": "coingecko:tether",
     }
-    start_iso = pd.Timestamp(start, tz="UTC").isoformat().replace("+00:00", "Z")
-    end_iso = pd.Timestamp(end + timedelta(days=1), tz="UTC").isoformat().replace("+00:00", "Z")
-    for symbol, product in coinbase_products.items():
-        try:
-            payload = _request_json(
-                f"https://api.exchange.coinbase.com/products/{product}/candles",
-                {
-                    "granularity": "86400",
-                    "start": start_iso,
-                    "end": end_iso,
-                },
-            )
-            if payload:
-                frame = pd.DataFrame(
-                    payload,
-                    columns=["timestamp", "low", "high", "open", "close", "volume"],
-                )
+    try:
+        start_ts = int(pd.Timestamp(start, tz="UTC").timestamp())
+        coins_path = ",".join(llama_ids.values())
+        payload = _request_json(
+            f"https://coins.llama.fi/chart/{coins_path}",
+            {"start": str(start_ts), "span": str(days + 1), "period": "1d"},
+        )
+        chart_data = payload.get("coins", {})
+        for symbol, coin_key in llama_ids.items():
+            coin_data = chart_data.get(coin_key, {})
+            points = coin_data.get("prices", [])
+            if points:
+                frame = pd.DataFrame(points)
                 frame["date"] = pd.to_datetime(frame["timestamp"], unit="s").dt.normalize()
-                values = frame.groupby("date")["close"].last().astype(float).sort_index()
+                values = frame.groupby("date")["price"].last().astype(float).sort_index()
                 values = values[values > 0]
                 if not values.empty:
                     series[symbol] = values
-                    sources.append(f"{symbol} — Coinbase Exchange ({product})")
-        except Exception as exc:
-            errors.append(f"{symbol} (Coinbase): {exc}")
+                    confidence = coin_data.get("confidence")
+                    confidence_note = (
+                        f", confiança de fonte {float(confidence):.2f}"
+                        if isinstance(confidence, (int, float)) else ""
+                    )
+                    sources.append(f"{symbol} — DeFiLlama ({coin_key}{confidence_note})")
+            else:
+                errors.append(f"{symbol} (DeFiLlama): histórico não retornado")
+    except Exception as exc:
+        errors.append(f"Criptoativos (DeFiLlama): {exc}")
 
     # USD is the numeraire. Forward-fill fiat weekends and align all series.
     # USD is the numeraire. It also provides a transparent peg proxy for
