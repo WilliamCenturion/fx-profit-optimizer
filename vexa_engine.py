@@ -76,10 +76,23 @@ def fetch_historical_prices(days: int = 120) -> Tuple[pd.DataFrame, list, list]:
             errors.append(f"{symbol} (CoinGecko): {exc}")
 
     # USD is the numeraire. Forward-fill fiat weekends and align all series.
-    series["USD"] = pd.Series(
-        1.0,
-        index=pd.date_range(start=pd.Timestamp(start), end=pd.Timestamp(end), freq="D"),
+    # USD is the numeraire. It also provides a transparent peg proxy for
+    # stablecoins if their individual market-history endpoint is unavailable.
+    daily_index = pd.date_range(
+        start=pd.Timestamp(start), end=pd.Timestamp(end), freq="D"
     )
+    series["USD"] = pd.Series(1.0, index=daily_index)
+
+    # Stablecoins target USD. When CoinGecko history is missing/rate-limited,
+    # use USD as an explicit peg proxy rather than failing the whole analysis.
+    # The UI/source note makes this assumption visible to the user.
+    for stablecoin in ("USDC", "USDT"):
+        if stablecoin not in series or series[stablecoin].dropna().shape[0] < 60:
+            series[stablecoin] = pd.Series(1.0, index=daily_index)
+            sources.append(
+                f"{stablecoin} — proxy de paridade USD (histórico próprio indisponível)"
+            )
+
     if not series:
         return pd.DataFrame(), sources, errors
 
