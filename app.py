@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime, timezone
+from vexa_engine import fetch_historical_prices, analyze_portfolio
 
 # ---------------------------------------------------------
 # VEXA — comparador de conversões | interface v3
@@ -565,6 +566,92 @@ else:
         st.caption(
             "Informe o valor, escolha a moeda e clique em “Encontrar melhor conversão”. "
             "O VEXA calculará o valor líquido estimado para cada ativo disponível."
+        )
+
+# ---------------------------------------------------------
+# VEXA Intelligence — medium-term decision support
+# ---------------------------------------------------------
+st.divider()
+st.markdown("### 🧠 VEXA Intelligence")
+st.caption(
+    "Análise de médio prazo (30–90 dias). O motor compara o comportamento "
+    "histórico dos ativos com sua moeda atual e não executa operações."
+)
+risk_profile = st.selectbox(
+    "Perfil de risco",
+    ["Conservador", "Moderado", "Arrojado"],
+    index=1,
+    key="vexa_risk_profile",
+)
+run_intelligence = st.button(
+    "Analisar posicionamento do meu patrimônio",
+    type="primary",
+    use_container_width=True,
+    key="run_vexa_intelligence",
+)
+if run_intelligence:
+    try:
+        with st.spinner("Carregando histórico e calculando indicadores..."):
+            historical_prices, history_sources, history_errors = fetch_historical_prices(120)
+            intelligence = analyze_portfolio(
+                origin_symbol=origin,
+                prices=historical_prices,
+                risk_profile=risk_profile,
+            )
+        st.markdown("#### 5. Recomendação VEXA")
+        action = intelligence["recommendation"]
+        if action == "Manter":
+            st.success("**Manter** — não há vantagem relativa suficiente para justificar uma troca.")
+        elif action == "Converter parcialmente":
+            st.warning(f"**Converter parcialmente** — avaliar exposição a {intelligence['candidate']}.")
+        else:
+            st.success(f"**Converter** — sinal forte identificado para {intelligence['candidate']}.")
+        st.write(intelligence["rationale"])
+        st.caption(
+            f"Ativo atual: {origin} · Perfil: {risk_profile} · "
+            f"Histórico: {intelligence['history_start']} a {intelligence['history_end']}"
+        )
+        st.metric(
+            "Pontuação do melhor candidato",
+            f"{intelligence['candidate_score']:.1f}/100",
+            delta=f"{intelligence['score_gap']:+.1f} pontos vs. ativo atual",
+        )
+        score_rows = []
+        for symbol, item in sorted(
+            intelligence["assets"].items(),
+            key=lambda pair: pair[1]["score"],
+            reverse=True,
+        ):
+            score_rows.append({
+                "Ativo": symbol,
+                "Score VEXA": item["score"],
+                "Momentum": item["momentum_score"],
+                "Tendência": item["trend_score"],
+                "Desvio histórico": item["valuation_score"],
+                "Risco": item["risk_score"],
+                "Retorno 30d": f"{item['return_30d']:+.2%}",
+                "Retorno 90d": f"{item['return_90d']:+.2%}",
+            })
+        st.dataframe(pd.DataFrame(score_rows), hide_index=True, use_container_width=True)
+        st.caption(intelligence["methodology"])
+        if history_sources:
+            st.caption("Fontes: " + " · ".join(history_sources))
+        if history_errors:
+            with st.expander("Fontes históricas indisponíveis"):
+                for error in history_errors:
+                    st.write("• " + error)
+        st.info(
+            "Esta é uma versão experimental do motor. Os scores são indicadores "
+            "relativos, não probabilidades de lucro nem previsões garantidas. "
+            "Cotações históricas de referência não representam preços executáveis. "
+            "Antes de converter, confirme spread, tarifas, liquidez, tributação e "
+            "riscos de custódia na plataforma escolhida."
+        )
+    except Exception as exc:
+        st.error(f"Não foi possível concluir a análise: {exc}")
+        st.caption(
+            "Verifique a disponibilidade das fontes históricas e tente novamente. "
+            "A comparação simples continua disponível acima."
         )
 
 # ---------------------------------------------------------
